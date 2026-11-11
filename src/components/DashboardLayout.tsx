@@ -1,0 +1,31 @@
+import Navbar from './Navbar';
+import Sidebar from './Sidebar';
+import type { UserRole } from '@/lib/types';
+import { Navigate } from 'react-router-dom';
+import { useAppSelector } from '@/store/hooks';
+import { useGetProfileQuery, type ProfileRole } from '@/store/profileApi';
+import { useState } from 'react';
+
+export default function DashboardLayout({ role, children }: { role: UserRole; children: React.ReactNode }) {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const user = useAppSelector((state) => state.auth.session?.user);
+  const profileRole = role === 'admin' ? undefined : role as ProfileRole;
+  useGetProfileQuery(
+    { role: profileRole as ProfileRole, userId: user?.id ?? '' },
+    { skip: !user || !profileRole },
+  );
+  // Learners can browse the public marketplace before signing in. Provider
+  // workspaces remain private; account actions handle their own login prompt.
+  if (!user && role !== 'student') return <Navigate to="/login" replace />;
+  if (user && user.role !== role) return <Navigate to={`/${user.role}`} replace />;
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Navbar />
+      <div className="flex flex-col lg:flex-row">
+        {user && <Sidebar role={role} open={sidebarOpen} onToggle={() => setSidebarOpen((open) => !open)} />}
+        <main className="min-w-0 flex-1 p-6 lg:p-8">{children}</main>
+      </div>
+    </div>
+  );
+}
