@@ -195,7 +195,7 @@ export default function EducatorCoursesPage() {
         price: Number(coursePrice),
       };
       const isEditing = Boolean(editingCourseId);
-      if (isEditing) {
+      if (editingCourseId) {
         await updateCourse({ ...coursePayload, _id: editingCourseId }).unwrap();
       } else {
         await createCourse(coursePayload).unwrap();
