@@ -291,7 +291,7 @@ export default function CoursesPage() {
         {/* Course Grid */}
         <div className="w-full">
           <p className="mb-3 text-sm text-gray-500">{isLoading ? 'Loading courses...' : `${filteredCourses.length} courses found`}</p>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-[repeat(auto-fill,minmax(19rem,19rem))]">
             {filteredCourses.map((course, idx) => (
               <div key={course.id} className="group w-full max-w-[19rem] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg">
                 <div className={`relative h-28 overflow-hidden bg-gradient-to-br ${gradients[idx % gradients.length]} p-4`}>
@@ -313,7 +313,7 @@ export default function CoursesPage() {
                   </div>
                 </div>
                 <div className="p-4">
-                  <h3 className="font-semibold text-gray-900 line-clamp-2 group-hover:text-indigo-600 transition-colors">{course.title}</h3>
+                  <h3 className="h-12 font-semibold text-gray-900 line-clamp-2 group-hover:text-indigo-600 transition-colors">{course.title}</h3>
                   <p className="mt-1 text-sm text-gray-500">{course.provider}</p>
                   <div className="mt-2 flex items-center gap-1.5">
                     <span className="text-sm font-semibold text-yellow-600">{course.rating}</span>
@@ -340,20 +340,22 @@ export default function CoursesPage() {
                       </span>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!userId) {
-                        navigate('/login');
-                        return;
-                      }
-                      setEnrollError(null);
-                      setSelectedCourse(course);
-                    }}
-                    className="mt-3 w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-700 active:bg-indigo-800"
-                  >
-                    Enroll Now
-                  </button>
+                  <div className="pt-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!userId) {
+                          navigate('/login');
+                          return;
+                        }
+                        setEnrollError(null);
+                        setSelectedCourse(course);
+                      }}
+                      className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-700 active:bg-indigo-800"
+                    >
+                      Enroll Now
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
