@@ -52,12 +52,20 @@ interface Lesson {
   type: 'video' | 'pdf' | 'quiz';
 }
 
-interface TestQuestion {
-  id: string;
-  text: string;
-  options: [string, string, string, string];
-  correctAnswer: number;
-  explanation: string;
+interface EducatorTestSeries {
+  clientKey: string;
+  title: string;
+  description: string;
+  category: string;
+  stage: string;
+  totalTests: number;
+  totalQuestions: number;
+  duration: string;
+  price: number;
+  discount: number;
+  rating: number;
+  language: string;
+  subjects: string[];
 }
 
 export default function EducatorCoursesPage() {
@@ -70,6 +78,7 @@ export default function EducatorCoursesPage() {
   const [deleteCourse, { isLoading: isDeleting }] = useDeleteCourseMutation();
   const educatorCourses = coursesFromResponse(coursesResponse);
   const showCourseDirectory = true;
+  const [activeTab, setActiveTab] = useState<'courses' | 'tests'>('courses');
   const [courseSearch, setCourseSearch] = useState('');
   const [courseStageFilter, setCourseStageFilter] = useState('all');
   const [coursePage, setCoursePage] = useState(1);
@@ -116,14 +125,22 @@ export default function EducatorCoursesPage() {
   // Test series creation state
   const [showTestForm, setShowTestForm] = useState(false);
   const [testTitle, setTestTitle] = useState('');
-  const [testSubject, setTestSubject] = useState('');
+  const [testDescription, setTestDescription] = useState('');
+  const [testCategory, setTestCategory] = useState('');
   const [testStage, setTestStage] = useState<string>('prelims');
-  const [testCount, setTestCount] = useState('');
-  const [testQuestions, setTestQuestions] = useState<TestQuestion[]>([]);
-  const [qText, setQText] = useState('');
-  const [qOptions, setQOptions] = useState<[string, string, string, string]>(['', '', '', '']);
-  const [qCorrect, setQCorrect] = useState(0);
-  const [qExplanation, setQExplanation] = useState('');
+  const [testPrice, setTestPrice] = useState('');
+  const [testDuration, setTestDuration] = useState('');
+  const [testDiscount, setTestDiscount] = useState('');
+  const [testRating, setTestRating] = useState('');
+  const [testLanguage, setTestLanguage] = useState('English');
+  const [testSubjects, setTestSubjects] = useState<string[]>([]);
+  const [subjectInput, setSubjectInput] = useState('');
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const [totalTests, setTotalTests] = useState('');
+  const [totalQuestions, setTotalQuestions] = useState(0);
+  const [uploadedQuestionRows, setUploadedQuestionRows] = useState<Record<string, unknown>[]>([]);
+  const [isReadingExcel, setIsReadingExcel] = useState(false);
+  const [testSeries, setTestSeries] = useState<EducatorTestSeries[]>([]);
 
   const addLesson = () => {
     if (!newLessonTitle.trim()) return;
@@ -152,26 +169,95 @@ export default function EducatorCoursesPage() {
     setLessons(updated);
   };
 
-  const addQuestion = () => {
-    if (!qText.trim() || qOptions.some((o) => !o.trim())) return;
-    setTestQuestions([
-      ...testQuestions,
-      {
-        id: `tq-${Date.now()}`,
-        text: qText,
-        options: [...qOptions],
-        correctAnswer: qCorrect,
-        explanation: qExplanation,
-      },
-    ]);
-    setQText('');
-    setQOptions(['', '', '', '']);
-    setQCorrect(0);
-    setQExplanation('');
+  const addSubject = () => {
+    const subject = subjectInput.trim();
+    if (!subject || testSubjects.some((item) => item.toLowerCase() === subject.toLowerCase())) return;
+    setTestSubjects((items) => [...items, subject]);
+    setSubjectInput('');
   };
 
-  const removeQuestion = (id: string) => {
-    setTestQuestions(testQuestions.filter((q) => q.id !== id));
+  const handleQuestionFile = async (file?: File) => {
+    if (!file) return;
+    setIsReadingExcel(true);
+    try {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const rows = workbook.SheetNames.flatMap((sheetName) =>
+        XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], { defval: '' }),
+      );
+      if (!rows.length) throw new Error('The workbook does not contain any question rows.');
+
+      const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const firstRowKeys = Object.keys(rows[0]);
+      const questionKey = firstRowKeys.find((key) => ['question', 'questiontext'].includes(normalize(key)));
+      if (!questionKey) throw new Error('Add a "Question" or "Question Text" column to the Excel file.');
+      const requiredColumns = [
+        { label: 'Option A', aliases: ['optiona', 'a'] },
+        { label: 'Option B', aliases: ['optionb', 'b'] },
+        { label: 'Option C', aliases: ['optionc', 'c'] },
+        { label: 'Option D', aliases: ['optiond', 'd'] },
+        { label: 'Correct Answer', aliases: ['correctanswer', 'answer'] },
+        { label: 'Explanation', aliases: ['explanation', 'solution'] },
+      ];
+      const missingColumns = requiredColumns.filter(({ aliases }) => !firstRowKeys.some((key) => aliases.includes(normalize(key))));
+      if (missingColumns.length) throw new Error(`Missing Excel columns: ${missingColumns.map(({ label }) => label).join(', ')}.`);
+      const questionRows = rows.filter((row) => String(row[questionKey] ?? '').trim());
+      if (!questionRows.length) throw new Error('No questions were found in the uploaded workbook.');
+
+      setUploadedFileName(file.name);
+      setUploadedQuestionRows(questionRows);
+      setTotalQuestions(questionRows.length);
+      enqueueSnackbar(`${questionRows.length} questions imported from Excel.`, { variant: 'success' });
+    } catch (error) {
+      setUploadedFileName(''); setUploadedQuestionRows([]); setTotalQuestions(0);
+      enqueueSnackbar(error instanceof Error ? error.message : 'Unable to read the Excel file.', { variant: 'error' });
+    } finally {
+      setIsReadingExcel(false);
+    }
+  };
+
+  const closeTestForm = () => setShowTestForm(false);
+
+  const publishTestSeries = () => {
+    if (!testTitle.trim() || !testDescription.trim() || !testCategory.trim() || !testPrice) {
+      enqueueSnackbar('Add the title, description, category and price before creating the test series.', { variant: 'error' });
+      return;
+    }
+    if (Number(testDiscount) < 0 || Number(testDiscount) > 100 || Number(testRating) < 0 || Number(testRating) > 5) {
+      enqueueSnackbar('Discount must be 0–100 and rating must be 0–5.', { variant: 'error' });
+      return;
+    }
+    if (!testLanguage.trim() || !testSubjects.length) {
+      enqueueSnackbar('Add a language and at least one subject.', { variant: 'error' });
+      return;
+    }
+    if (!uploadedQuestionRows.length) {
+      enqueueSnackbar('Upload the Excel question file before creating the test series.', { variant: 'error' });
+      return;
+    }
+    if (!totalTests || Number(totalTests) < 1) {
+      enqueueSnackbar('Total tests must be at least 1.', { variant: 'error' });
+      return;
+    }
+    setTestSeries((items) => [{
+      clientKey: `test-series-${Date.now()}`,
+      title: testTitle.trim(),
+      description: testDescription.trim(),
+      category: testCategory.trim(),
+      stage: testStage,
+      totalTests: Number(totalTests),
+      totalQuestions,
+      duration: testDuration.trim(),
+      price: Number(testPrice),
+      discount: Number(testDiscount) || 0,
+      rating: Number(testRating) || 0,
+      language: testLanguage.trim(),
+      subjects: testSubjects,
+    }, ...items]);
+    setTestTitle(''); setTestDescription(''); setTestCategory(''); setTestStage('prelims'); setTestPrice(''); setTestDuration(''); setTestDiscount(''); setTestRating(''); setTestLanguage('English'); setTestSubjects([]); setSubjectInput(''); setUploadedFileName(''); setUploadedQuestionRows([]); setTotalQuestions(0); setTotalTests('');
+    closeTestForm();
+    setActiveTab('tests');
+    enqueueSnackbar('Test series created successfully.', { variant: 'success' });
   };
 
   const publishCourse = async () => {
@@ -247,26 +333,33 @@ export default function EducatorCoursesPage() {
             onClick={() => {
               setEditingCourseId(null);
               setCourseTitle(''); setCourseDescription(''); setCourseCategory(''); setCourseSubjects(''); setCourseStage('all'); setCoursePrice(''); setCourseLanguage('English'); setLessons([]);
-              setShowCourseForm(!showCourseForm);
+              setShowCourseForm(true);
               setShowTestForm(false);
+              setActiveTab('courses');
             }}
             className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
           >
-            {showCourseForm ? 'Hide Course Form' : '+ New Course'}
+            + New Course
           </button>
           <button
             onClick={() => {
-              setShowTestForm(!showTestForm);
+              setShowTestForm(true);
               setShowCourseForm(false);
+              setActiveTab('tests');
             }}
             className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
           >
-            {showTestForm ? 'Hide Test Form' : '+ New Test Series'}
+            + New Test Series
           </button>
         </div>
       </div>
 
-      {showCourseDirectory && (<>
+      <div className="inline-flex rounded-xl bg-slate-100 p-1" role="tablist" aria-label="Content type">
+        <button type="button" role="tab" aria-selected={activeTab === 'courses'} onClick={() => setActiveTab('courses')} className={`rounded-lg px-4 py-2 text-sm font-medium transition ${activeTab === 'courses' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>Courses ({educatorCourses.length})</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'tests'} onClick={() => setActiveTab('tests')} className={`rounded-lg px-4 py-2 text-sm font-medium transition ${activeTab === 'tests' ? 'bg-white text-purple-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>Test Series ({testSeries.length})</button>
+      </div>
+
+      {activeTab === 'courses' && showCourseDirectory && (<>
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div><h2 className="text-base font-semibold text-slate-900">Your courses</h2><p className="mt-0.5 text-sm text-slate-500">{filteredEducatorCourses.length} courses in your catalog</p></div>
@@ -281,6 +374,13 @@ export default function EducatorCoursesPage() {
       </>)}
 
       {editingCourse && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"><div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"><div className="flex items-center justify-between"><h2 className="text-lg font-semibold text-slate-900">Edit course</h2><button onClick={() => setEditingCourse(null)} className="text-slate-400 hover:text-slate-700">✕</button></div><div className="mt-5 space-y-4"><div><label className="mb-1 block text-sm font-medium text-slate-700">Title</label><input value={editingCourse.title} onChange={(e) => setEditingCourse({ ...editingCourse, title: e.target.value })} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-100" /></div><div><label className="mb-1 block text-sm font-medium text-slate-700">Description</label><textarea value={editingCourse.description} onChange={(e) => setEditingCourse({ ...editingCourse, description: e.target.value })} rows={3} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-100" /></div><div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-sm font-medium text-slate-700">Stage</label><select value={editingCourse.stage} onChange={(e) => setEditingCourse({ ...editingCourse, stage: e.target.value })} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"><option value="prelims">Prelims</option><option value="mains">Mains</option><option value="interview">Interview</option><option value="all">All stages</option></select></div><div><label className="mb-1 block text-sm font-medium text-slate-700">Price</label><input type="number" value={editingCourse.price} onChange={(e) => setEditingCourse({ ...editingCourse, price: Number(e.target.value) })} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></div></div></div><div className="mt-6 flex justify-end gap-3"><button onClick={() => setEditingCourse(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button><button onClick={() => void saveCourseEdit()} disabled={isUpdating} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{isUpdating ? 'Saving...' : 'Save changes'}</button></div></div></div>}
+
+      {activeTab === 'tests' && (
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 p-4"><h2 className="text-base font-semibold text-slate-900">Your test series</h2><p className="mt-0.5 text-sm text-slate-500">{testSeries.length} test series in your catalog</p></div>
+          {testSeries.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px]"><thead className="bg-slate-50 text-left"><tr className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"><th className="px-4 py-3">Test series</th><th className="px-3 py-3">Stage</th><th className="px-3 py-3">Tests</th><th className="px-3 py-3">Questions</th><th className="px-3 py-3">Price</th><th className="px-4 py-3 text-right">Status</th></tr></thead><tbody className="divide-y divide-slate-100">{testSeries.map((series) => <tr key={series.clientKey} className="text-sm hover:bg-slate-50"><td className="px-4 py-3"><p className="font-medium text-slate-900">{series.title}</p><p className="mt-0.5 text-xs text-slate-500">{series.category} · {series.subjects.join(', ')}</p></td><td className="px-3 py-3"><span className="rounded-full bg-purple-50 px-2.5 py-1 text-xs font-medium capitalize text-purple-700">{series.stage}</span></td><td className="px-3 py-3 text-slate-700">{series.totalTests}</td><td className="px-3 py-3 text-slate-700">{series.totalQuestions}</td><td className="px-3 py-3 font-medium text-slate-900">₹{series.price.toLocaleString('en-IN')}</td><td className="px-4 py-3 text-right"><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">Published</span></td></tr>)}</tbody></table></div> : <div className="px-4 py-14 text-center"><p className="text-sm font-medium text-slate-700">No test series yet</p><p className="mt-1 text-sm text-slate-500">Create a test series to start adding questions for your learners.</p><button type="button" onClick={() => setShowTestForm(true)} className="mt-4 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700">+ New Test Series</button></div>}
+        </section>
+      )}
 
       {courseToDelete && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><h2 className="text-lg font-semibold text-slate-900">Delete course?</h2><p className="mt-2 text-sm leading-6 text-slate-600">Are you sure you want to delete <span className="font-semibold">{courseToDelete.title}</span>? This action cannot be undone.</p><div className="mt-6 flex justify-end gap-3"><button onClick={() => setCourseToDelete(null)} disabled={isDeleting} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button><button onClick={() => void confirmCourseDelete()} disabled={isDeleting} className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{isDeleting ? 'Deleting...' : 'Delete course'}</button></div></div></div>}
 
@@ -347,7 +447,7 @@ export default function EducatorCoursesPage() {
         <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
           <div className="mb-6 flex items-center justify-between"><h2 className="text-lg font-semibold text-gray-900">{editingCourseId ? 'Edit Course' : 'Create New Course'}</h2><button type="button" onClick={() => { setShowCourseForm(false); setEditingCourseId(null); }} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close course form">✕</button></div>
           <div className="space-y-5">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Course Title</label>
                 <input
@@ -564,9 +664,10 @@ export default function EducatorCoursesPage() {
 
       {/* Create Test Series Form */}
       {showTestForm && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-6">Create Test Series</h2>
-          <div className="space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" role="dialog" aria-modal="true" aria-labelledby="test-series-title" onMouseDown={(event) => { if (event.target === event.currentTarget) closeTestForm(); }}>
+          <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between"><h2 id="test-series-title" className="text-lg font-semibold text-gray-900">Create Test Series</h2><button type="button" onClick={closeTestForm} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close test series form">×</button></div>
+            <div className="space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Test Series Title</label>
@@ -579,17 +680,21 @@ export default function EducatorCoursesPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
                 <input
                   type="text"
-                  value={testSubject}
-                  onChange={(e) => setTestSubject(e.target.value)}
-                  placeholder="e.g., Indian Polity"
+                  value={testCategory}
+                  onChange={(e) => setTestCategory(e.target.value)}
+                  placeholder="e.g., Prelims"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                 />
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea value={testDescription} onChange={(e) => setTestDescription(e.target.value)} rows={3} placeholder="Describe the test series, solutions and ranking features..." className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Stage</label>
                 <select
@@ -602,125 +707,56 @@ export default function EducatorCoursesPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Number of Tests</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Price (₹)</label>
                 <input
                   type="number"
-                  value={testCount}
-                  onChange={(e) => setTestCount(e.target.value)}
-                  placeholder="e.g., 10"
+                  min="0"
+                  value={testPrice}
+                  onChange={(e) => setTestPrice(e.target.value)}
+                  placeholder="e.g., 4999"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Duration</label>
+                <input type="text" value={testDuration} onChange={(e) => setTestDuration(e.target.value)} placeholder="e.g., 2 hours per test" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500" />
+              </div>
             </div>
 
-            {/* Question Builder */}
-            <div className="border-t border-gray-200 pt-5">
-              <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                Add Questions ({testQuestions.length} added)
-              </h3>
-              <div className="space-y-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Question Text</label>
-                  <textarea
-                    value={qText}
-                    onChange={(e) => setQText(e.target.value)}
-                    rows={2}
-                    placeholder="Enter the question..."
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {qOptions.map((opt, i) => (
-                    <div key={i}>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">
-                        Option {String.fromCharCode(65 + i)}
-                      </label>
-                      <input
-                        type="text"
-                        value={opt}
-                        onChange={(e) => {
-                          const updated = [...qOptions] as [string, string, string, string];
-                          updated[i] = e.target.value;
-                          setQOptions(updated);
-                        }}
-                        placeholder={`Option ${String.fromCharCode(65 + i)}`}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                      />
-                    </div>
-                  ))}
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Correct Answer</label>
-                    <select
-                      value={qCorrect}
-                      onChange={(e) => setQCorrect(Number(e.target.value))}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    >
-                      <option value={0}>Option A</option>
-                      <option value={1}>Option B</option>
-                      <option value={2}>Option C</option>
-                      <option value={3}>Option D</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Explanation</label>
-                    <input
-                      type="text"
-                      value={qExplanation}
-                      onChange={(e) => setQExplanation(e.target.value)}
-                      placeholder="Why is this the correct answer?"
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
-                <button
-                  onClick={addQuestion}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
-                >
-                  Add Question
-                </button>
-              </div>
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
+              <div><label className="mb-1 block text-sm font-medium text-gray-700">Discount (%)</label><input type="number" min="0" max="100" value={testDiscount} onChange={(e) => setTestDiscount(e.target.value)} placeholder="e.g., 10" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500" /></div>
+              <div><label className="mb-1 block text-sm font-medium text-gray-700">Rating</label><input type="number" min="0" max="5" step="0.1" value={testRating} onChange={(e) => setTestRating(e.target.value)} placeholder="e.g., 4.8" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500" /></div>
+              <div><label className="mb-1 block text-sm font-medium text-gray-700">Total Tests</label><input type="number" min="1" value={totalTests} onChange={(e) => setTotalTests(e.target.value)} placeholder="e.g., 35" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500" /></div>
+              <div><label className="mb-1 block text-sm font-medium text-gray-700">Total Questions</label><input type="number" value={totalQuestions || ''} readOnly placeholder="Auto-filled from Excel" className="w-full cursor-not-allowed rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" /></div>
+            </div>
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+              <div><label className="mb-1 block text-sm font-medium text-gray-700">Language</label><input type="text" value={testLanguage} onChange={(e) => setTestLanguage(e.target.value)} placeholder="e.g., English" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500" /></div>
+              <div><label className="mb-1 block text-sm font-medium text-gray-700">Subjects</label><div className="flex gap-2"><input type="text" value={subjectInput} onChange={(e) => setSubjectInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addSubject(); } }} placeholder="Type a subject" className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500" /><button type="button" onClick={addSubject} className="rounded-lg border border-purple-200 px-4 py-2 text-sm font-medium text-purple-700 hover:bg-purple-50">Add</button></div>{testSubjects.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{testSubjects.map((subject) => <span key={subject} className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700">{subject}<button type="button" onClick={() => setTestSubjects((items) => items.filter((item) => item !== subject))} aria-label={`Remove ${subject}`}>×</button></span>)}</div>}</div>
+            </div>
 
-              {/* Added Questions */}
-              {testQuestions.length > 0 && (
-                <div className="mt-4 space-y-2">
-                  {testQuestions.map((q, idx) => (
-                    <div
-                      key={q.id}
-                      className="flex items-start justify-between p-3 bg-white border border-gray-200 rounded-lg"
-                    >
-                      <div className="flex-1">
-                        <p className="text-sm text-gray-700">
-                          <span className="font-medium text-gray-900">Q{idx + 1}.</span> {q.text}
-                        </p>
-                        <p className="text-xs text-green-600 mt-1">
-                          Correct: Option {String.fromCharCode(65 + q.correctAnswer)}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => removeQuestion(q.id)}
-                        className="ml-3 p-1 text-red-400 hover:text-red-600"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+            {/* Excel question upload */}
+            <div className="border-t border-gray-200 pt-5">
+              <h3 className="mb-1 text-sm font-semibold text-gray-900">Upload questions from Excel</h3>
+              <p className="mb-3 text-xs leading-5 text-gray-500">Use .xlsx or .xls. Include Question, Option A–D, Correct Answer and Explanation columns. Total Questions is calculated from the uploaded rows.</p>
+              <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-purple-200 bg-purple-50/40 px-6 py-8 text-center transition hover:border-purple-400 hover:bg-purple-50">
+                <input type="file" accept=".xlsx,.xls" className="sr-only" onChange={(event) => void handleQuestionFile(event.target.files?.[0])} />
+                <svg className="mb-3 h-9 w-9 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7 16a4 4 0 01-.88-7.903A5.5 5.5 0 0116.9 6.1 4.5 4.5 0 0118 15h-1m-5-5v9m0-9-3 3m3-3 3 3" /></svg>
+                <span className="text-sm font-semibold text-purple-700">{isReadingExcel ? 'Reading Excel file...' : uploadedFileName || 'Choose Excel file'}</span>
+                <span className="mt-1 text-xs text-gray-500">Questions, options, correct answers and explanations can be uploaded in one file</span>
+              </label>
+              {totalQuestions > 0 && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3"><p className="text-xs text-emerald-700">Questions imported from Excel</p><p className="mt-1 text-lg font-bold text-emerald-900">{totalQuestions}</p></div>}
             </div>
 
             <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
-              <button className="px-5 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">
-                Save Draft
+              <button type="button" onClick={closeTestForm} className="px-5 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">
+                Cancel
               </button>
-              <button className="px-5 py-2.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors">
-                Publish Test Series
+              <button type="button" onClick={publishTestSeries} className="px-5 py-2.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors">
+                Create Test Series
               </button>
             </div>
           </div>
+        </div>
         </div>
       )}
     </div>
